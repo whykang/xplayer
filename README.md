@@ -3,7 +3,7 @@
 <div align="center">
 
 ![XPlayer Logo](https://img.shields.io/badge/XPlayer-Music%20Player-blue?style=for-the-badge&logo=music)
-![iOS](https://img.shields.io/badge/iOS-13.0+-black?style=for-the-badge&logo=apple)
+![iOS](https://img.shields.io/badge/iOS-16.0+-black?style=for-the-badge&logo=apple)
 ![Swift](https://img.shields.io/badge/Swift-5.0+-orange?style=for-the-badge&logo=swift)
 ![License](https://img.shields.io/badge/License-MIT-green?style=for-the-badge)
 
@@ -29,7 +29,7 @@
 
 <img src="https://s21.ax1x.com/2025/06/07/pVi2WWV.png" width="150" alt="App Store下载二维码"/>
 
-*支持iOS 13.0及以上版本*
+*支持iOS 16.0及以上版本*
 
 </div>
 
@@ -66,10 +66,14 @@
 ## 📱 应用截图
 
 <div align="center">
+<img src="https://s21.ax1x.com/2025/06/07/pVi24QU.png" width="200" alt="主界面"/> 
+<img src="https://s21.ax1x.com/2025/06/07/pVi2IL4.png" width="200" alt="主界面"/> 
+<img src="https://s21.ax1x.com/2025/06/07/pVi26ds.png" width="200" alt="主界面"/> 
+<img src="https://s21.ax1x.com/2025/06/07/pVi2rLQ.png" width="200" alt="播放界面"/> 
+<img src="https://s21.ax1x.com/2025/06/07/pVi2yZj.png" width="200" alt="歌词显示"/>
+<img src="https://s21.ax1x.com/2025/06/07/pVi2Dsg.png" width="200" alt="设置页面"/>
 
-<img src="https://s21.ax1x.com/2025/06/07/pVi26ds.png" width="200" alt="主界面"/> <img src="https://s21.ax1x.com/2025/06/07/pVi2rLQ.png" width="200" alt="播放界面"/> <img src="https://s21.ax1x.com/2025/06/07/pVi2yZj.png" width="200" alt="歌词显示"/> <img src="https://s21.ax1x.com/2025/06/07/pVi2Dsg.png" width="200" alt="设置页面"/>
 
-*主界面 • 播放界面 • 歌词显示 • 设置页面*
 
 </div>
 
@@ -78,7 +82,7 @@
 ## 🚀 开发环境安装
 
 ### 系统要求
-- **iOS 13.0** 或更高版本
+- **iOS 16.0** 或更高版本
 - **Xcode 12.0** 或更高版本（开发环境）
 - **Swift 5.0** 或更高版本
 
@@ -164,12 +168,6 @@ class WebServerManager: ObservableObject {
 
 ## 🎯 主要特性详解
 
-### 🔄 智能路径迁移
-应用支持智能处理iOS系统更新后的沙盒路径变化，确保音乐文件访问的连续性：
-
-- 自动检测路径变化
-- 批量迁移文件路径
-- 保持数据完整性
 
 ### 🌐 局域网导入功能
 创建临时HTTP服务器，支持从其他设备快速传输音乐：
@@ -214,20 +212,13 @@ class WebServerManager: ObservableObject {
 
 ---
 
-## 🔗 相关链接
 
-- [App Store页面](https://apps.apple.com/app/6744457947)
-- [问题反馈](https://github.com/yourusername/XPlayer/issues)
-- [功能请求](https://github.com/yourusername/XPlayer/issues/new?template=feature_request.md)
-- [更新日志](CHANGELOG.md)
-
----
 
 ## 👨‍💻 开发者
 
 **Wang Hongyue**
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Email: your.email@example.com
+
+- Email: kangkangwhy@gmail.com
 
 ---
 
@@ -241,4 +232,4 @@ class WebServerManager: ObservableObject {
 
 **📱 立即下载体验完整功能**
 
-</div> 
+</div>
