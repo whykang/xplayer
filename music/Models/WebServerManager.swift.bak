@@ -1,0 +1,1557 @@
+import Foundation
+import Network
+import Darwin
+import SystemConfiguration
+import Darwin.C
+
+// 添加一个协议用于处理上传的文件
+protocol WebServerManagerDelegate {
+    func handleUploadedFile(withName filename: String, data: Data)
+}
+
+// WebServer管理器
+class WebServerManager: ObservableObject {
+    // 服务器监听端口
+    private let port: UInt16 = 8080
+    
+    // HTTP服务器实例
+    private var httpServer: SimpleHTTPServer?
+    
+    // 文件接收回调
+    var onFileReceived: ((URL, String, Int, String) -> Void)?
+    
+    // 添加代理属性
+    var delegate: WebServerManagerDelegate?
+    
+    // 服务器状态
+    enum ServerStatus {
+        case stopped
+        case running
+        case error(String)
+    }
+    
+    // 添加serverStatus属性
+    @Published var serverStatus: ServerStatus = .stopped
+    
+    // 存储上传的文件信息
+    private var uploadedFiles: [(url: URL, name: String, size: Int, date: Date)] = []
+    
+    // 增强型上传页面HTML
+    var html: String {
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>增强型音乐上传</title>
+            <style>
+                body { 
+                    font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+                    margin: 0; 
+                    padding: 0;
+                    background: #f5f5f7;
+                    color: #1d1d1f;
+                }
+                .container {
+                    max-width: 800px;
+                    margin: 0 auto;
+                    padding: 20px;
+                }
+                header {
+                    text-align: center;
+                    padding: 20px 0;
+                }
+                h1 { 
+                    color: #1d1d1f; 
+                    margin: 10px 0; 
+                    font-weight: 500;
+                }
+                .upload-area {
+                    background: white;
+                    border-radius: 10px;
+                    padding: 30px;
+                    margin: 20px 0;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                }
+                .dropzone {
+                    border: 2px dashed #ccc;
+                    border-radius: 10px;
+                    padding: 60px 20px;
+                    text-align: center;
+                    margin: 20px 0;
+                    background: #fafafa;
+                    cursor: pointer;
+                    transition: all 0.3s;
+                }
+                .dropzone:hover, .dropzone.active {
+                    border-color: #0071e3;
+                    background: #f0f7ff;
+                }
+                .dropzone i {
+                    font-size: 48px;
+                    color: #0071e3;
+                    margin-bottom: 10px;
+                    display: block;
+                }
+                .file-list {
+                    margin: 20px 0;
+                }
+                .file-item {
+                    display: flex;
+                    align-items: center;
+                    padding: 10px;
+                    border-bottom: 1px solid #eee;
+                }
+                .file-item:last-child {
+                    border-bottom: none;
+                }
+                .file-icon {
+                    width: 40px;
+                    height: 40px;
+                    background: #f2f2f7;
+                    border-radius: 8px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    margin-right: 15px;
+                }
+                .file-info {
+                    flex: 1;
+                }
+                .file-name {
+                    font-weight: 500;
+                    margin-bottom: 5px;
+                    word-break: break-all;
+                }
+                .file-meta {
+                    font-size: 13px;
+                    color: #86868b;
+                }
+                .file-actions {
+                    display: flex;
+                    gap: 10px;
+                }
+                .btn {
+                    background: #0071e3;
+                    color: white;
+                    border: none;
+                    padding: 10px 20px;
+                    border-radius: 6px;
+                    font-weight: 500;
+                    cursor: pointer;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 5px;
+                    transition: all 0.2s;
+                }
+                .btn:hover {
+                    background: #0077ED;
+                }
+                .btn-secondary {
+                    background: transparent;
+                    color: #0071e3;
+                    border: 1px solid #0071e3;
+                }
+                .btn-secondary:hover {
+                    background: #f0f7ff;
+                }
+                .btn-danger {
+                    background: #ff3b30;
+                }
+                .btn-danger:hover {
+                    background: #ff4d40;
+                }
+                .btn-small {
+                    padding: 5px 10px;
+                    font-size: 13px;
+                }
+                .progress {
+                    height: 6px;
+                    background: #e0e0e0;
+                    border-radius: 3px;
+                    overflow: hidden;
+                    margin: 5px 0;
+                }
+                .progress-bar {
+                    height: 100%;
+                    background: #0071e3;
+                    width: 0%;
+                    transition: width 0.3s;
+                }
+                .status {
+                    padding: 10px;
+                    border-radius: 6px;
+                    margin: 10px 0;
+                    text-align: center;
+                    display: none;
+                }
+                .status.success {
+                    background: #e8f8e8;
+                    color: #1b801b;
+                    display: block;
+                }
+                .status.error {
+                    background: #ffe0e0;
+                    color: #d12c2c;
+                    display: block;
+                }
+                .upload-icon {
+                    font-size: 64px;
+                    color: #0071e3;
+                    margin-bottom: 20px;
+                }
+                .hidden {
+                    display: none;
+                }
+                .fade-in {
+                    animation: fadeIn 0.5s;
+                }
+                @keyframes fadeIn {
+                    from { opacity: 0; }
+                    to { opacity: 1; }
+                }
+                
+                /* 响应式布局 */
+                @media (max-width: 640px) {
+                    .container {
+                        padding: 10px;
+                    }
+                    .upload-area {
+                        padding: 20px 15px;
+                    }
+                    .dropzone {
+                        padding: 30px 15px;
+                    }
+                    .file-actions {
+                        flex-direction: column;
+                    }
+                }
+            </style>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+        </head>
+        <body>
+            <div class="container">
+                <header>
+                    <h1>音乐文件上传</h1>
+                    <p>选择或拖放您想要上传的音频文件</p>
+                </header>
+                
+                <div class="upload-area">
+                    <div id="dropzone" class="dropzone">
+                        <i class="fas fa-cloud-upload-alt upload-icon"></i>
+                        <h3>拖放文件到这里</h3>
+                        <p>或者点击选择文件</p>
+                        <input type="file" id="file-input" multiple accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" style="display: none;">
+                    </div>
+                    
+                    <div id="status-messages" class="status"></div>
+                    
+                    <div id="file-list" class="file-list"></div>
+                    
+                    <div id="upload-controls" style="text-align: center; margin-top: 20px; display: none;">
+                        <button id="upload-btn" class="btn">
+                            <i class="fas fa-upload"></i> 上传所有文件
+                        </button>
+                        <button id="clear-btn" class="btn btn-secondary">
+                            <i class="fas fa-trash"></i> 清空列表
+                        </button>
+                    </div>
+                </div>
+            </div>
+            
+            <script>
+                document.addEventListener('DOMContentLoaded', function() {
+                    const dropzone = document.getElementById('dropzone');
+                    const fileInput = document.getElementById('file-input');
+                    const fileList = document.getElementById('file-list');
+                    const uploadBtn = document.getElementById('upload-btn');
+                    const clearBtn = document.getElementById('clear-btn');
+                    const uploadControls = document.getElementById('upload-controls');
+                    const statusMessages = document.getElementById('status-messages');
+                    
+                    // 文件列表
+                    let files = [];
+                    
+                    // 初始化拖放区域
+                    initDropzone();
+                    
+                    // 点击上传按钮
+                    uploadBtn.addEventListener('click', uploadFiles);
+                    
+                    // 清空按钮
+                    clearBtn.addEventListener('click', function() {
+                        files = [];
+                        updateFileList();
+                        uploadControls.style.display = 'none';
+                        statusMessages.className = 'status';
+                        statusMessages.textContent = '';
+                    });
+                    
+                    // 初始化拖放区域
+                    function initDropzone() {
+                        // 点击拖放区域触发文件选择
+                        dropzone.addEventListener('click', function() {
+                            fileInput.click();
+                        });
+                        
+                        // 文件选择事件
+                        fileInput.addEventListener('change', function(e) {
+                            handleFiles(e.target.files);
+                            fileInput.value = ''; // 重置以允许选择相同文件
+                        });
+                        
+                        // 拖放事件
+                        dropzone.addEventListener('dragover', function(e) {
+                            e.preventDefault();
+                            dropzone.classList.add('active');
+                        });
+                        
+                        dropzone.addEventListener('dragleave', function() {
+                            dropzone.classList.remove('active');
+                        });
+                        
+                        dropzone.addEventListener('drop', function(e) {
+                            e.preventDefault();
+                            dropzone.classList.remove('active');
+                            handleFiles(e.dataTransfer.files);
+                        });
+                    }
+                    
+                    // 处理文件
+                    function handleFiles(fileList) {
+                        // 筛选音频文件
+                        const audioFiles = Array.from(fileList).filter(file => {
+                            return file.type.startsWith('audio/') || 
+                                  /\\.(mp3|wav|m4a|aac|flac|ogg)$/i.test(file.name);
+                        });
+                        
+                        // 如果没有有效文件
+                        if (audioFiles.length === 0) {
+                            showStatus('请选择有效的音频文件', 'error');
+                            return;
+                        }
+                        
+                        // 添加到文件列表
+                        files = [...files, ...audioFiles];
+                        updateFileList();
+                        uploadControls.style.display = 'block';
+                        
+                        // 显示成功消息
+                        showStatus(`已添加 ${audioFiles.length} 个文件到上传列表`, 'success');
+                    }
+                    
+                    // 更新文件列表显示
+                    function updateFileList() {
+                        fileList.innerHTML = '';
+                        
+                        files.forEach((file, index) => {
+                            const fileItem = document.createElement('div');
+                            fileItem.className = 'file-item fade-in';
+                            
+                            // 获取文件类型图标
+                            const fileExtension = file.name.split('.').pop().toLowerCase();
+                            let iconClass = 'fa-music';
+                            if (['mp3', 'wav', 'm4a', 'aac'].includes(fileExtension)) {
+                                iconClass = 'fa-file-audio';
+                            }
+                            
+                            fileItem.innerHTML = `
+                                <div class="file-icon">
+                                    <i class="fas ${iconClass}"></i>
+                                </div>
+                                <div class="file-info">
+                                    <div class="file-name">${file.name}</div>
+                                    <div class="file-meta">${formatFileSize(file.size)} - ${getFileType(file)}</div>
+                                    <div class="progress" style="display: none;">
+                                        <div class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="file-actions">
+                                    <button class="btn btn-small btn-danger" onclick="removeFile(${index})">
+                                        <i class="fas fa-times"></i> 移除
+                                    </button>
+                                </div>
+                            `;
+                            
+                            fileList.appendChild(fileItem);
+                        });
+                        
+                        // 添加全局函数以便HTML事件能访问
+                        window.removeFile = function(index) {
+                            files.splice(index, 1);
+                            updateFileList();
+                            
+                            if (files.length === 0) {
+                                uploadControls.style.display = 'none';
+                            }
+                        };
+                    }
+                    
+                    // 上传文件
+                    function uploadFiles() {
+                        if (files.length === 0) {
+                            showStatus('请先添加文件', 'error');
+                            return;
+                        }
+                        
+                        // 禁用上传按钮
+                        uploadBtn.disabled = true;
+                        uploadBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 上传中...';
+                        
+                        // 显示所有进度条
+                        document.querySelectorAll('.progress').forEach(p => p.style.display = 'block');
+                        
+                        // 逐个上传文件
+                        let successCount = 0;
+                        let errorCount = 0;
+                        
+                        const uploadPromises = files.map((file, index) => {
+                            return new Promise((resolve) => {
+                                const formData = new FormData();
+                                formData.append('file', file, file.name);
+                                
+                                const xhr = new XMLHttpRequest();
+                                const progressBar = document.querySelectorAll('.progress-bar')[index];
+                                
+                                // 进度事件
+                                xhr.upload.addEventListener('progress', function(e) {
+                                    if (e.lengthComputable) {
+                                        const percentComplete = (e.loaded / e.total) * 100;
+                                        progressBar.style.width = percentComplete + '%';
+                                    }
+                                });
+                                
+                                // 完成事件
+                                xhr.addEventListener('load', function() {
+                                    if (xhr.status === 200) {
+                                        successCount++;
+                                        progressBar.style.width = '100%';
+                                        progressBar.style.backgroundColor = '#34c759';
+                                    } else {
+                                        errorCount++;
+                                        progressBar.style.backgroundColor = '#ff3b30';
+                                    }
+                                    resolve();
+                                });
+                                
+                                // 错误事件
+                                xhr.addEventListener('error', function() {
+                                    errorCount++;
+                                    progressBar.style.backgroundColor = '#ff3b30';
+                                    resolve();
+                                });
+                                
+                                // 发送请求
+                                xhr.open('POST', '/upload', true);
+                                xhr.send(formData);
+                            });
+                        });
+                        
+                        // 所有上传完成后
+                        Promise.all(uploadPromises).then(() => {
+                            uploadBtn.disabled = false;
+                            uploadBtn.innerHTML = '<i class="fas fa-upload"></i> 上传所有文件';
+                            
+                            let statusMessage = `上传完成! ${successCount}个文件成功`;
+                            if (errorCount > 0) {
+                                statusMessage += `, ${errorCount}个文件失败`;
+                                showStatus(statusMessage, 'error');
+                            } else {
+                                showStatus(statusMessage, 'success');
+                                // 清空列表
+                                setTimeout(() => {
+                                    files = [];
+                                    updateFileList();
+                                    uploadControls.style.display = 'none';
+                                }, 2000);
+                            }
+                        });
+                    }
+                    
+                    // 显示状态消息
+                    function showStatus(message, type) {
+                        statusMessages.textContent = message;
+                        statusMessages.className = 'status ' + type;
+                        
+                        // 5秒后自动隐藏成功消息
+                        if (type === 'success') {
+                            setTimeout(() => {
+                                statusMessages.className = 'status';
+                            }, 5000);
+                        }
+                    }
+                    
+                    // 格式化文件大小
+                    function formatFileSize(bytes) {
+                        if (bytes < 1024) {
+                            return bytes + ' B';
+                        } else if (bytes < 1024 * 1024) {
+                            return (bytes / 1024).toFixed(1) + ' KB';
+                        } else {
+                            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+                        }
+                    }
+                    
+                    // 获取文件类型显示
+                    function getFileType(file) {
+                        const types = {
+                            'audio/mpeg': 'MP3',
+                            'audio/mp3': 'MP3',
+                            'audio/wav': 'WAV',
+                            'audio/x-wav': 'WAV',
+                            'audio/mp4': 'M4A',
+                            'audio/aac': 'AAC',
+                            'audio/flac': 'FLAC',
+                            'audio/ogg': 'OGG'
+                        };
+                        
+                        // 使用文件类型
+                        if (types[file.type]) {
+                            return types[file.type];
+                        }
+                        
+                        // 回退到扩展名
+                        const ext = file.name.split('.').pop().toUpperCase();
+                        return ['MP3', 'WAV', 'M4A', 'AAC', 'FLAC', 'OGG'].includes(ext) ? ext : '音频文件';
+                    }
+                });
+            </script>
+        </body>
+        </html>
+        """
+    }
+    
+    // 启动服务器
+    func startServer(delegate: WebServerManagerDelegate? = nil) -> String {
+        // 保存代理
+        self.delegate = delegate
+        
+        // 获取本地IP地址
+        let ipAddress = getLocalIPAddress()
+        print("使用IP地址: \(ipAddress)")
+        
+        // 创建SimpleHTTPServer
+        let server = SimpleHTTPServer(port: 8080)
+        // 设置代理
+        server.delegate = delegate
+        server.onFileReceived = onFileReceived
+        self.httpServer = server
+        
+        // 启动服务器
+        DispatchQueue.global(qos: .background).async { [weak self] in
+            guard let self = self else { return }
+            print("启动服务器...")
+            do {
+                try server.start()
+            } catch {
+                print("服务器启动失败: \(error.localizedDescription)")
+                self.serverStatus = .error(error.localizedDescription)
+            }
+        }
+        
+        return ipAddress
+    }
+    
+    // 停止服务器
+    func stopServer() {
+        httpServer?.stop()
+        httpServer = nil
+    }
+    
+    // 获取本机IP地址
+    private func getLocalIPAddress() -> String {
+        // 默认IP地址
+        var ipAddress = "127.0.0.1" // 默认使用localhost
+        
+        print("获取本机IP地址...")
+        
+        // 使用更直接的方式获取WiFi接口的IP地址
+        var ifaddr: UnsafeMutablePointer<ifaddrs>?
+        guard getifaddrs(&ifaddr) == 0 else {
+            print("无法获取网络接口列表")
+            return ipAddress
+        }
+        defer { freeifaddrs(ifaddr) }
+        
+        print("扫描可用网络接口...")
+        
+        var ptr = ifaddr
+        while ptr != nil {
+            defer { ptr = ptr?.pointee.ifa_next }
+            
+            guard let interface = ptr?.pointee else { continue }
+            guard let addr = interface.ifa_addr else { continue }
+            
+            let addrFamily = addr.pointee.sa_family
+            
+            // 检查IPv4接口
+            if addrFamily == UInt8(AF_INET) {
+                // 获取接口名称
+                let name = String(cString: interface.ifa_name)
+                
+                print("检查接口: \(name), 协议族: \(addrFamily)")
+                
+                // 只选择无线或有线接口
+                if name == "en0" || name == "en1" || name.hasPrefix("en") {
+                    // 将接口地址转换为字符串
+                    var hostname = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                    getnameinfo(addr, socklen_t(addr.pointee.sa_len),
+                                &hostname, socklen_t(hostname.count), nil, 0, NI_NUMERICHOST)
+                    
+                    // 获取IP地址字符串
+                    let addressString = String(cString: hostname)
+                    print("接口 \(name) 地址: \(addressString)")
+                    
+                    // 优先选择192.168开头的地址（常见的局域网地址）
+                    if addressString.hasPrefix("192.168") {
+                        ipAddress = addressString
+                        print("选择192.168网段IP地址: \(ipAddress)")
+                        break
+                    }
+                    
+                    // 其次选择10开头的地址
+                    if addressString.hasPrefix("10.") && ipAddress == "127.0.0.1" {
+                        ipAddress = addressString
+                        print("选择10.网段IP地址: \(ipAddress)")
+                        // 继续查找，因为可能还有192.168网段
+                    }
+                    
+                    // 再次是172.16-31网段
+                    if addressString.hasPrefix("172.") && ipAddress == "127.0.0.1" {
+                        let parts = addressString.split(separator: ".")
+                        if parts.count >= 2, let second = Int(parts[1]), second >= 16 && second <= 31 {
+                            ipAddress = addressString
+                            print("选择172.16-31网段IP地址: \(ipAddress)")
+                        }
+                    }
+                    
+                    // 排除本地回环地址
+                    if addressString != "127.0.0.1" && ipAddress == "127.0.0.1" {
+                        ipAddress = addressString
+                        print("选择其他网段IP地址: \(ipAddress)")
+                    }
+                }
+            }
+        }
+        
+        print("最终选择的IP地址: \(ipAddress)")
+        return ipAddress
+    }
+    
+    // 格式化文件大小
+    private func formatFileSize(_ bytes: Int) -> String {
+        let kb = Double(bytes) / 1024.0
+        
+        if kb < 1024 {
+            return String(format: "%.1f KB", kb)
+        } else {
+            let mb = kb / 1024.0
+            return String(format: "%.1f MB", mb)
+        }
+    }
+    
+    // 发送上传页面
+    private func sendUploadPage(to clientSocket: Int32) {
+        let html: String
+        
+        // 检查是否有代理并且是WebServerManager
+        if let webServerManager = delegate as? WebServerManager {
+            // 检查是否使用增强型上传页面
+            let useEnhancedPage = UserDefaults.standard.bool(forKey: "useEnhancedUploadPage")
+            html = useEnhancedPage ? webServerManager.html : getSimpleUploadPageHTML()
+        } else {
+            // 如果没有代理，使用简单上传页面
+            html = getSimpleUploadPageHTML()
+        }
+        
+        let response = """
+        HTTP/1.1 200 OK
+        Content-Type: text/html; charset=UTF-8
+        Content-Length: \(html.count)
+        Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+        Pragma: no-cache
+        Expires: 0
+        Connection: close
+
+        \(html)
+        """
+        
+        if let responseData = response.data(using: .utf8) {
+            let _ = responseData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, responseData.count, 0)
+            }
+            print("已发送上传页面")
+        } else {
+            print("无法生成响应数据")
+        }
+    }
+    
+    // 发送错误响应
+    private func sendErrorResponse(to clientSocket: Int32, errorMessage: String) {
+        let html = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>错误</title>
+            <style>
+                body {
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+                    max-width: 600px;
+                    margin: 40px auto;
+                    padding: 20px;
+                    text-align: center;
+                }
+                .error-container {
+                    background-color: #fff3f3;
+                    border-left: 4px solid #ff3b30;
+                    padding: 15px;
+                    margin: 20px 0;
+                    border-radius: 5px;
+                }
+                h1 {
+                    color: #333;
+                }
+                .error-message {
+                    color: #cc0000;
+                    font-size: 18px;
+                }
+                .back-link {
+                    display: inline-block;
+                    margin-top: 20px;
+                    background-color: #0071e3;
+                    color: white;
+                    padding: 10px 20px;
+                    text-decoration: none;
+                    border-radius: 5px;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>请求处理失败</h1>
+            <div class="error-container">
+                <div class="error-message">\(errorMessage)</div>
+            </div>
+            <a href="/" class="back-link">返回主页</a>
+        </body>
+        </html>
+        """
+        
+        let response = """
+        HTTP/1.1 400 Bad Request
+        Content-Type: text/html; charset=UTF-8
+        Content-Length: \(html.count)
+        Connection: close
+
+        \(html)
+        """
+        
+        if let responseData = response.data(using: .utf8) {
+            let _ = responseData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, responseData.count, 0)
+            }
+        }
+    }
+    
+    // 简单上传页面HTML
+    private func getSimpleUploadPageHTML() -> String {
+        return """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1.0">
+            <title>音乐上传</title>
+            <style>
+                body { 
+                    font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
+                    margin: 0; 
+                    padding: 20px; 
+                    text-align: center; 
+                    background: #f5f5f7;
+                }
+                h1 { 
+                    color: #1d1d1f; 
+                    margin: 30px 0; 
+                    font-weight: 500;
+                }
+                .box { 
+                    background: white; 
+                    border-radius: 10px; 
+                    padding: 30px; 
+                    margin: 20px auto; 
+                    max-width: 500px;
+                    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+                }
+                .field {
+                    margin-bottom: 20px;
+                    text-align: left;
+                }
+                label {
+                    display: block;
+                    margin-bottom: 8px;
+                    font-weight: 500;
+                    color: #333;
+                }
+                input[type="text"] {
+                    display: block;
+                    width: 100%;
+                    padding: 10px;
+                    border-radius: 8px;
+                    border: 1px solid #ddd;
+                    font-size: 16px;
+                    box-sizing: border-box;
+                }
+                input[type="file"] { 
+                    display: block; 
+                    width: 100%; 
+                    margin: 8px 0;
+                    padding: 10px;
+                    background: #f2f2f7;
+                    border-radius: 8px;
+                    border: none;
+                    box-sizing: border-box;
+                }
+                button { 
+                    background: #0071e3; 
+                    color: white; 
+                    border: none; 
+                    padding: 12px 30px; 
+                    border-radius: 8px; 
+                    font-size: 16px; 
+                    font-weight: 500;
+                    cursor: pointer;
+                    margin-top: 10px;
+                }
+                button:disabled {
+                    background: #999;
+                    cursor: not-allowed;
+                }
+                .note {
+                    font-size: 14px;
+                    color: #86868b;
+                    margin-top: 20px;
+                    text-align: left;
+                }
+            </style>
+        </head>
+        <body>
+            <h1>上传音乐文件</h1>
+            <div class="box">
+                <form action="/upload" method="post" enctype="multipart/form-data">
+                    <div class="field">
+                        <label for="file">选择音乐文件:</label>
+                        <input type="file" id="file" name="file" accept="audio/*,.mp3,.wav,.m4a,.aac,.flac,.ogg" required>
+                    </div>
+                    <button type="submit">上传文件</button>
+                </form>
+                <div class="note">支持的格式: MP3, WAV, M4A, AAC, FLAC, OGG</div>
+            </div>
+        </body>
+        </html>
+        """
+    }
+    
+    deinit {
+        stopServer()
+    }
+}
+
+// 简单HTTP服务器实现
+class SimpleHTTPServer {
+    private let port: UInt16
+    private var serverSocket: Int32 = -1
+    private var isRunning = false
+    private let serverQueue = DispatchQueue(label: "com.music.httpServer", attributes: .concurrent)
+    
+    // 文件上传回调
+    var onFileUpload: ((URL, String, Int, String) -> Void)?
+    
+    // 添加自己的onFileReceived回调
+    var onFileReceived: ((URL, String, Int, String) -> Void)?
+    
+    // 添加delegate属性
+    var delegate: WebServerManagerDelegate?
+    
+    init(port: UInt16) {
+        self.port = port
+    }
+    
+    // 启动服务器
+    func start() throws -> String {
+        // 创建套接字
+        serverSocket = socket(AF_INET, SOCK_STREAM, 0)
+        guard serverSocket != -1 else {
+            throw NSError(domain: "WebServerError", code: 1, userInfo: [NSLocalizedDescriptionKey: "无法创建服务器套接字"])
+        }
+        
+        print("服务器套接字创建成功: \(serverSocket)")
+        
+        // 设置套接字选项
+        var value: Int32 = 1
+        if setsockopt(serverSocket, SOL_SOCKET, SO_REUSEADDR, &value, socklen_t(MemoryLayout<Int32>.size)) == -1 {
+            print("设置REUSEADDR失败: \(errno)")
+        }
+        
+        // 设置接收超时
+        var timeout = timeval(tv_sec: 30, tv_usec: 0)
+        if setsockopt(serverSocket, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == -1 {
+            print("设置接收超时失败: \(errno)")
+        }
+        
+        // 设置发送超时
+        if setsockopt(serverSocket, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size)) == -1 {
+            print("设置发送超时失败: \(errno)")
+        }
+        
+        // 绑定地址
+        var addr = sockaddr_in()
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_addr.s_addr = inet_addr("0.0.0.0")
+        addr.sin_port = CFSwapInt16HostToBig(UInt16(port))
+        
+        let addrPointer = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
+        }
+        
+        let bindResult = bind(serverSocket, addrPointer, socklen_t(MemoryLayout<sockaddr_in>.size))
+        guard bindResult != -1 else {
+            close(serverSocket)
+            throw NSError(domain: "WebServerError", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法绑定服务器地址"])
+        }
+        
+        print("服务器地址绑定成功")
+        
+        // 监听连接
+        let listenResult = listen(serverSocket, 5)
+        guard listenResult != -1 else {
+            close(serverSocket)
+            throw NSError(domain: "WebServerError", code: 3, userInfo: [NSLocalizedDescriptionKey: "无法监听连接"])
+        }
+        
+        print("服务器监听开始，等待连接")
+        
+        // 获取本地IP地址
+        let ip = "127.0.0.1" // 默认使用localhost
+        print("服务器地址: \(ip):\(port)")
+        
+        // 启动接受连接的循环
+        isRunning = true
+        serverQueue.async { [weak self] in
+            guard let self = self else { return }
+            
+            print("开始接受连接，地址: \(ip):\(self.port)")
+            
+            while self.isRunning {
+                var clientAddr = sockaddr_in()
+                var clientAddrLen = socklen_t(MemoryLayout<sockaddr_in>.size)
+                let clientAddrPointer = withUnsafeMutablePointer(to: &clientAddr) {
+                    $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { $0 }
+                }
+                
+                let clientSocket = accept(self.serverSocket, clientAddrPointer, &clientAddrLen)
+                if clientSocket == -1 {
+                    if errno == EAGAIN || errno == EWOULDBLOCK {
+                        // 接收超时，继续循环
+                        continue
+                    }
+                    print("接受连接失败: \(errno)")
+                    continue
+                }
+                
+                // 获取客户端IP地址
+                var clientIP = "未知"
+                var clientHost = [CChar](repeating: 0, count: Int(NI_MAXHOST))
+                if getnameinfo(clientAddrPointer, clientAddrLen, &clientHost, socklen_t(clientHost.count), 
+                               nil, 0, NI_NUMERICHOST) == 0 {
+                    clientIP = String(cString: clientHost)
+                }
+                
+                print("接受来自 \(clientIP) 的新连接: \(clientSocket)")
+                
+                // 在新线程中处理客户端请求
+                DispatchQueue.global().async { [weak self] in
+                    guard let self = self else { return }
+                    self.handleClient(clientSocket: clientSocket)
+                }
+            }
+        }
+        
+        return ip
+    }
+    
+    // 停止服务器
+    func stop() {
+        isRunning = false
+        if serverSocket != -1 {
+            close(serverSocket)
+            serverSocket = -1
+        }
+    }
+    
+    // 处理客户端连接
+    private func handleClient(clientSocket: Int32) {
+        print("开始处理客户端请求...")
+        
+        // 创建缓冲区和变量
+        let initialBufferSize = 8192
+        var buffer = [UInt8](repeating: 0, count: initialBufferSize)
+        
+        // 读取请求头 - 使用循环和更大的超时
+        var bytesRead = 0
+        var totalBytesRead = 0
+        var requestData = Data()
+        var headerData: Data? = nil
+        var contentLength = 0
+        var requestHeaderComplete = false
+        var method = ""
+        var path = ""
+        
+        // 设置较短的超时以处理空连接
+        var shortTimeout = timeval(tv_sec: 2, tv_usec: 0)
+        if setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &shortTimeout, socklen_t(MemoryLayout<timeval>.size)) == -1 {
+            print("设置短超时失败: \(errno)")
+        }
+        
+        // 尝试读取数据 - 首先只读取请求头部
+        while !requestHeaderComplete {
+            bytesRead = recv(clientSocket, &buffer, initialBufferSize - 1, 0)
+            
+            if bytesRead <= 0 {
+                if errno == EAGAIN || errno == EWOULDBLOCK {
+                    // 可能是超时，但我们已经有一些数据，尝试继续处理
+                    if !requestData.isEmpty {
+                        break
+                    }
+                    print("接收数据超时: \(errno)")
+                    close(clientSocket)
+                    return
+                } else {
+                    print("接收请求失败: \(errno)")
+                    close(clientSocket)
+                    return
+                }
+            }
+            
+            totalBytesRead += bytesRead
+            requestData.append(Data(bytes: buffer, count: bytesRead))
+            
+            // 查找请求头结束标记
+            if let headerEndIndex = indexOfSequence(data: requestData, sequence: "\r\n\r\n".data(using: .utf8)!) {
+                // 提取HTTP头部
+                headerData = requestData.prefix(headerEndIndex + 4)
+                
+                // 从头部数据解析出Method和Path
+                if let headerString = String(data: headerData!, encoding: .utf8) {
+                    let lines = headerString.components(separatedBy: "\r\n")
+                    if let firstLine = lines.first, !firstLine.isEmpty {
+                        let components = firstLine.components(separatedBy: " ")
+                        if components.count >= 2 {
+                            method = components[0].uppercased()
+                            path = components[1]
+                        }
+                    }
+                    
+                    // 解析Content-Length
+                    if let contentLengthRange = headerString.range(of: "Content-Length:", options: .caseInsensitive),
+                       let endOfLine = headerString[contentLengthRange.upperBound...].range(of: "\r\n") {
+                        let lengthString = headerString[contentLengthRange.upperBound..<endOfLine.lowerBound]
+                        contentLength = Int(lengthString.trimmingCharacters(in: .whitespaces)) ?? 0
+                    }
+                }
+                
+                requestHeaderComplete = true
+                
+                // 如果是GET请求，我们只需要头部
+                if method == "GET" {
+                    break
+                }
+            }
+            
+            // 防止无限循环
+            if totalBytesRead > 100 * 1024 && headerData == nil { // 如果已读取超过100KB但仍未找到头部结束
+                print("无法找到HTTP头部的结束，放弃此连接")
+                close(clientSocket)
+                return
+            }
+        }
+        
+        print("HTTP头部已解析: \(method) \(path), 内容长度: \(contentLength)")
+        
+        // 如果是POST请求，继续读取请求体
+        if method == "POST" && contentLength > 0 {
+            // 计算已接收的请求体大小
+            let bodyBytesReceived = totalBytesRead - (headerData?.count ?? 0)
+            let remainingBytes = contentLength - bodyBytesReceived
+            
+            // 设置更长的超时时间以处理大文件
+            var longTimeout = timeval(tv_sec: 300, tv_usec: 0) // 5分钟超时
+            setsockopt(clientSocket, SOL_SOCKET, SO_RCVTIMEO, &longTimeout, socklen_t(MemoryLayout<timeval>.size))
+            
+            print("继续读取请求体: 已接收 \(bodyBytesReceived)/\(contentLength) 字节，剩余 \(remainingBytes) 字节")
+            
+            // 如果还有更多数据要读取
+            if remainingBytes > 0 {
+                // 使用更大的缓冲区来提高效率
+                let largeBufferSize = 65536 // 64 KB缓冲区
+                var largeBuffer = [UInt8](repeating: 0, count: largeBufferSize)
+                
+                var totalBodyReceived = bodyBytesReceived
+                // 报告进度的步骤
+                let progressStep = max(contentLength / 10, 1024 * 1024) // 每10%或每1MB报告一次
+                var nextProgressReport = totalBodyReceived + progressStep
+                
+                while totalBodyReceived < contentLength {
+                    let toRead = min(largeBufferSize, contentLength - totalBodyReceived)
+                    bytesRead = recv(clientSocket, &largeBuffer, toRead, 0)
+                    
+                    if bytesRead <= 0 {
+                        if errno == EAGAIN || errno == EWOULDBLOCK {
+                            // 短暂暂停后再试
+                            usleep(10000) // 10ms
+                            continue
+                        } else {
+                            // 连接关闭或错误
+                            print("读取请求体失败: \(errno)")
+                            break
+                        }
+                    }
+                    
+                    requestData.append(Data(bytes: largeBuffer, count: bytesRead))
+                    totalBodyReceived += bytesRead
+                    totalBytesRead += bytesRead
+                    
+                    // 报告进度
+                    if totalBodyReceived >= nextProgressReport {
+                        print("已接收 \(totalBodyReceived)/\(contentLength) 字节的请求体")
+                        nextProgressReport += progressStep
+                    }
+                }
+                
+                print("请求体接收完成，总大小: \(totalBytesRead) 字节")
+            }
+        }
+        
+        print("处理 \(method) 请求: \(path)")
+        
+        // 根据路径处理不同的请求
+        switch (method, path) {
+        case ("GET", "/"):
+            // 主页 - 返回上传页面
+            self.sendUploadPage(to: clientSocket)
+            
+        case ("GET", "/file-list"):
+            // 获取已上传文件列表
+            self.sendFileList(to: clientSocket)
+            
+        case ("POST", "/upload"):
+            // 处理文件上传
+            print("接收到文件上传请求，数据长度: \(requestData.count)")
+            self.processMultiFileUpload(requestData: requestData, clientSocket: clientSocket)
+            
+        case ("POST", "/delete-file"):
+            // 删除文件
+            self.handleDeleteFile(requestData: requestData, clientSocket: clientSocket)
+            
+        case ("POST", "/import-files"):
+            // 导入选定的文件
+            self.handleImportFiles(requestData: requestData, clientSocket: clientSocket)
+            
+        default:
+            // 不支持的请求
+            print("不支持的请求: \(method) \(path)")
+            self.sendErrorResponse(to: clientSocket, errorMessage: "不支持的请求")
+        }
+        
+        // 关闭连接
+        close(clientSocket)
+        print("客户端连接已关闭: \(clientSocket)")
+    }
+    
+    // 辅助函数：查找字节序列在数据中的位置
+    private func indexOfSequence(data: Data, sequence: Data) -> Int? {
+        var index: Int? = nil
+        var searchStart = 0
+        
+        while let range = data.range(of: sequence, options: [], range: searchStart..<data.endIndex) {
+            index = range.lowerBound.utf8Offset(in: data)
+            searchStart = range.upperBound
+        }
+        
+        return index
+    }
+    
+    // 发送文件列表
+    private func sendFileList(to clientSocket: Int32) {
+        // 获取临时目录中的上传文件
+        let tempDir = FileManager.default.temporaryDirectory
+        let filesDir = tempDir.appendingPathComponent("uploaded_files")
+        
+        // 创建上传文件目录（如果不存在）
+        try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        
+        var fileList: [[String: Any]] = []
+        
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: [.fileSizeKey, .creationDateKey])
+            
+            for (index, fileURL) in fileURLs.enumerated() {
+                let filename = fileURL.lastPathComponent
+                let attributes = try fileURL.resourceValues(forKeys: [.fileSizeKey, .creationDateKey])
+                let fileSize = attributes.fileSize ?? 0
+                let creationDate = attributes.creationDate ?? Date()
+                
+                fileList.append([
+                    "index": index,
+                    "name": filename,
+                    "size": fileSize,
+                    "date": Int(creationDate.timeIntervalSince1970)
+                ])
+            }
+        } catch {
+            print("读取上传文件列表失败: \(error.localizedDescription)")
+        }
+        
+        // 创建JSON响应
+        let responseDict: [String: Any] = [
+            "success": true,
+            "files": fileList
+        ]
+        
+        var jsonData = Data()
+        do {
+            jsonData = try JSONSerialization.data(withJSONObject: responseDict)
+        } catch {
+            print("创建文件列表JSON失败: \(error.localizedDescription)")
+            sendErrorResponse(to: clientSocket, errorMessage: "无法生成文件列表")
+            return
+        }
+        
+        // 发送HTTP响应
+        let response = """
+        HTTP/1.1 200 OK
+        Content-Type: application/json; charset=UTF-8
+        Content-Length: \(jsonData.count)
+        Connection: close
+
+        """
+        
+        if let responseData = response.data(using: .utf8) {
+            let _ = responseData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, responseData.count, 0)
+            }
+            let _ = jsonData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, jsonData.count, 0)
+            }
+        }
+    }
+    
+    // 处理多文件上传
+    private func processMultiFileUpload(requestData: Data, clientSocket: Int32) {
+        // 检查是否是multipart/form-data
+        guard let requestString = String(data: requestData.prefix(1000), encoding: .utf8),
+              let contentTypeRange = requestString.range(of: "Content-Type:", options: .caseInsensitive),
+              let endOfLine = requestString[contentTypeRange.upperBound...].range(of: "\r\n") else {
+            sendErrorResponse(to: clientSocket, errorMessage: "必须使用multipart/form-data格式上传文件")
+            return
+        }
+        
+        // 从Content-Type提取边界字符串
+        var boundary = ""
+        if let boundaryRange = requestString[contentTypeRange.upperBound...].range(of: "boundary="),
+           let boundaryEnd = requestString[boundaryRange.upperBound...].range(of: "\r\n") {
+            boundary = String(requestString[boundaryRange.upperBound..<boundaryEnd.lowerBound])
+            boundary = boundary.trimmingCharacters(in: .whitespaces)
+        }
+        
+        guard !boundary.isEmpty else {
+            sendErrorResponse(to: clientSocket, errorMessage: "无法确定multipart边界")
+            return
+        }
+        
+        // 创建完整的分隔符
+        let boundaryPrefix = "--\(boundary)"
+        let finalBoundary = "--\(boundary)--"
+        
+        // 将请求体拆分为不同部分
+        guard let requestBody = String(data: requestData, encoding: .utf8) else {
+            sendErrorResponse(to: clientSocket, errorMessage: "无法解析请求体")
+            return
+        }
+        
+        // 按边界分隔符拆分数据
+        let parts = requestBody.components(separatedBy: boundaryPrefix)
+        
+        // 跳过第一部分（通常是HTTP头信息）
+        var processedFiles = 0
+        
+        // 确保上传文件的临时目录存在
+        let tempDir = FileManager.default.temporaryDirectory
+        let filesDir = tempDir.appendingPathComponent("uploaded_files")
+        try? FileManager.default.createDirectory(at: filesDir, withIntermediateDirectories: true)
+        
+        // 处理每个文件部分
+        for part in parts.dropFirst() {
+            // 忽略最后的边界标记
+            if part.contains(finalBoundary) {
+                continue
+            }
+            
+            // 查找文件名
+            guard let filenameRange = part.range(of: "filename=\"", options: .caseInsensitive),
+                  let filenameEndRange = part[filenameRange.upperBound...].range(of: "\"") else {
+                continue
+            }
+            
+            let filename = String(part[filenameRange.upperBound..<filenameEndRange.lowerBound])
+            if filename.isEmpty {
+                continue
+            }
+            
+            // 查找Content-Type
+            var contentType = "application/octet-stream"
+            if let contentTypeRange = part.range(of: "Content-Type:", options: .caseInsensitive),
+               let contentTypeEndRange = part[contentTypeRange.upperBound...].range(of: "\r\n") {
+                contentType = String(part[contentTypeRange.upperBound..<contentTypeEndRange.lowerBound]).trimmingCharacters(in: .whitespaces)
+            }
+            
+            // 查找文件数据的开始和结束
+            guard let headerEndRange = part.range(of: "\r\n\r\n") else {
+                continue
+            }
+            
+            // 提取文件数据
+            let fileDataStartIndex = headerEndRange.upperBound
+            let fileDataEndIndex = part.endIndex
+            
+            guard fileDataStartIndex < fileDataEndIndex else {
+                continue
+            }
+            
+            // 提取文件数据的字符串
+            let fileDataString = String(part[fileDataStartIndex..<fileDataEndIndex])
+            
+            // 转换为Data对象
+            guard let fileData = fileDataString.data(using: .utf8) else {
+                continue
+            }
+            
+            // 保存文件
+            let fileURL = filesDir.appendingPathComponent(filename)
+            do {
+                try fileData.write(to: fileURL)
+                processedFiles += 1
+                print("文件已保存: \(filename)")
+                
+                // 调用代理方法
+                if let delegate = self.delegate {
+                    DispatchQueue.main.async {
+                        delegate.handleUploadedFile(withName: filename, data: fileData)
+                    }
+                }
+                
+                // 触发回调
+                if let onFileReceived = self.onFileReceived {
+                    let fileSize = fileData.count
+                    let date = Date()
+                    let dateString = ISO8601DateFormatter().string(from: date)
+                    DispatchQueue.main.async {
+                        onFileReceived(fileURL, filename, fileSize, dateString)
+                    }
+                }
+            } catch {
+                print("保存文件失败: \(error.localizedDescription)")
+            }
+        }
+        
+        // 发送成功响应
+        let responseDict: [String: Any] = [
+            "success": true,
+            "message": "文件上传成功",
+            "fileCount": processedFiles
+        ]
+        
+        var jsonData = Data()
+        do {
+            jsonData = try JSONSerialization.data(withJSONObject: responseDict)
+        } catch {
+            print("创建上传响应JSON失败: \(error.localizedDescription)")
+            sendErrorResponse(to: clientSocket, errorMessage: "服务器内部错误")
+            return
+        }
+        
+        // 发送HTTP响应
+        let response = """
+        HTTP/1.1 200 OK
+        Content-Type: application/json; charset=UTF-8
+        Content-Length: \(jsonData.count)
+        Connection: close
+
+        """
+        
+        if let responseData = response.data(using: .utf8) {
+            let _ = responseData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, responseData.count, 0)
+            }
+            let _ = jsonData.withUnsafeBytes { ptr in
+                send(clientSocket, ptr.baseAddress, jsonData.count, 0)
+            }
+        }
+    }
+    
+    // 处理文件删除请求
+    private func handleDeleteFile(requestData: Data, clientSocket: Int32) {
+        // 解析请求中的index
+        guard let jsonObject = try? JSONSerialization.jsonObject(with: requestData),
+              let dict = jsonObject as? [String: Any],
+              let index = dict["index"] as? Int else {
+            sendErrorResponse(to: clientSocket, errorMessage: "无效的请求格式")
+            return
+        }
+        
+        // 获取临时目录中的所有文件
+        let tempDir = FileManager.default.temporaryDirectory
+        let filesDir = tempDir.appendingPathComponent("uploaded_files")
+        
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: nil)
+            
+            // 确保索引有效
+            guard index >= 0 && index < fileURLs.count else {
+                sendErrorResponse(to: clientSocket, errorMessage: "无效的文件索引")
+                return
+            }
+            
+            // 获取要删除的文件URL
+            let fileURL = fileURLs[index]
+            
+            // 删除文件
+            try FileManager.default.removeItem(at: fileURL)
+            
+            print("文件已删除: \(fileURL.lastPathComponent)")
+            
+            // 发送成功响应
+            let responseDict: [String: Any] = [
+                "success": true,
+                "message": "文件已删除"
+            ]
+            
+            let jsonData = try JSONSerialization.data(withJSONObject: responseDict)
+            
+            // 发送HTTP响应
+            let response = """
+            HTTP/1.1 200 OK
+            Content-Type: application/json; charset=UTF-8
+            Content-Length: \(jsonData.count)
+            Connection: close
+
+            """
+            
+            if let responseData = response.data(using: .utf8) {
+                let _ = responseData.withUnsafeBytes { ptr in
+                    send(clientSocket, ptr.baseAddress, responseData.count, 0)
+                }
+                let _ = jsonData.withUnsafeBytes { ptr in
+                    send(clientSocket, ptr.baseAddress, jsonData.count, 0)
+                }
+            }
+            
+        } catch {
+            print("删除文件失败: \(error.localizedDescription)")
+            sendErrorResponse(to: clientSocket, errorMessage: "删除文件失败: \(error.localizedDescription)")
+        }
+    }
+    
+    // 处理文件导入请求
+    private func handleImportFiles(requestData: Data, clientSocket: Int32) {
+        // 解析请求中的索引数组
+        guard let jsonObject = try? JSONSerialization.jsonObject(with: requestData),
+              let dict = jsonObject as? [String: Any],
+              let indexes = dict["indexes"] as? [Int] else {
+            sendErrorResponse(to: clientSocket, errorMessage: "无效的请求格式")
+            return
+        }
+        
+        // 获取临时目录中的所有文件
+        let tempDir = FileManager.default.temporaryDirectory
+        let filesDir = tempDir.appendingPathComponent("uploaded_files")
+        
+        var importedCount = 0
+        var failedCount = 0
+        
+        do {
+            let fileURLs = try FileManager.default.contentsOfDirectory(at: filesDir, includingPropertiesForKeys: nil)
+            
+            // 导入每个选中的文件
+            for index in indexes {
+                // 确保索引有效
+                guard index >= 0 && index < fileURLs.count else {
+                    failedCount += 1
+                    continue
+                }
+                
+                // 获取文件URL
+                let fileURL = fileURLs[index]
+                
+                // 调用代理方法处理文件导入
+                if let delegate = self.delegate {
+                    do {
+                        let fileData = try Data(contentsOf: fileURL)
+                        let filename = fileURL.lastPathComponent
+                        
+                        // 在主线程调用代理方法
+                        DispatchQueue.main.async {
+                            delegate.handleUploadedFile(withName: filename, data: fileData)
+                        }
+                        
+                        importedCount += 1
+                    } catch {
+                        print("读取文件失败: \(error.localizedDescription)")
+                        failedCount += 1
+                    }
+                } else {
+                    failedCount += 1
+                }
+            }
+            
+            // 发送成功响应
+            let responseDict: [String: Any] = [
+                "success": true,
+                "message": "文件导入完成",
+                "imported": importedCount,
+                "failed": failedCount
+            ]
+            
+            let jsonData = try JSONSerialization.data(withJSONObject: responseDict)
+            
+            // 发送HTTP响应
+            let response = """
+            HTTP/1.1 200 OK
+            Content-Type: application/json; charset=UTF-8
+            Content-Length: \(jsonData.count)
+            Connection: close
+
+            """
+            
+            if let responseData = response.data(using: .utf8) {
+                let _ = responseData.withUnsafeBytes { ptr in
+                    send(clientSocket, ptr.baseAddress, responseData.count, 0)
+                }
+                let _ = jsonData.withUnsafeBytes { ptr in
+                    send(clientSocket, ptr.baseAddress, jsonData.count, 0)
+                }
+            }
+            
+        } catch {
+            print("处理文件导入请求失败: \(error.localizedDescription)")
+            sendErrorResponse(to: clientSocket, errorMessage: "导入文件失败: \(error.localizedDescription)")
+        }
+    }
+    
+    deinit {
+        self.stop()
+    }
+} 

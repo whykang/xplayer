@@ -1,0 +1,239 @@
+//
+//  MusicWidgetLiveActivity.swift
+//  MusicWidget
+//
+//  Created by Hongyue Wang on 2025/4/1.
+//
+
+import ActivityKit
+import WidgetKit
+import SwiftUI
+import SharedTypes
+
+struct MusicWidgetLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: MusicPlaybackAttributes.self) { context in
+            // Lock screen/banner UI goes here
+            LiveActivityView(context: context)
+                .activityBackgroundTint(Color.black.opacity(0.8))
+                .activitySystemActionForegroundColor(Color.white)
+
+        } dynamicIsland: { context in
+            // Dynamic Island UI goes here
+            DynamicIsland {
+                // Expanded UI goes here
+                DynamicIslandExpandedRegion(.leading) {
+                    Label {
+                        Text(context.state.title)
+                    } icon: {
+                        Image(systemName: "music.note")
+                    }
+                }
+                
+                DynamicIslandExpandedRegion(.trailing) {
+                    Label {
+                        Text(context.state.artist)
+                    } icon: {
+                        Image(systemName: "person")
+                    }
+                }
+                
+                DynamicIslandExpandedRegion(.bottom) {
+                    // Bottom expanded UI goes here
+                    HStack {
+                        Image(systemName: context.state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                            .font(.system(size: 32))
+                            .foregroundColor(.white)
+                    }
+                }
+            } compactLeading: {
+                Image(systemName: "music.note")
+                    .foregroundColor(.white)
+            } compactTrailing: {
+                Image(systemName: context.state.isPlaying ? "pause.fill" : "play.fill")
+                    .foregroundColor(.white)
+            } minimal: {
+                Image(systemName: "music.note")
+                    .foregroundColor(.white)
+            }
+        }
+    }
+}
+
+struct LiveActivityView: View {
+    let context: ActivityViewContext<MusicPlaybackAttributes>
+    @State private var isExpanded = false
+    
+    var body: some View {
+        let state = context.state
+        
+        // 紧凑视图（灵动岛上的标准视图）
+        if context.isStale {
+            compactView(state: state)
+        } else if isExpanded {
+            expandedView(state: state)
+        } else {
+            compactView(state: state)
+        }
+    }
+    
+    // 紧凑视图 - 灵动岛上的标准显示
+    func compactView(state: MusicPlaybackAttributes.ContentState) -> some View {
+        HStack {
+            // 专辑封面占位
+            Circle()
+                .fill(LinearGradient(
+                    gradient: Gradient(colors: [.blue.opacity(0.7), .purple.opacity(0.7)]),
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ))
+                .frame(width: 40, height: 40)
+                .overlay(
+                    Image(systemName: "music.note")
+                        .foregroundColor(.white)
+                        .font(.system(size: 20))
+                )
+            
+            // 歌曲信息
+            VStack(alignment: .leading, spacing: 2) {
+                Text(state.title)
+                    .font(.system(size: 14, weight: .bold))
+                    .lineLimit(1)
+                
+                Text(state.artist)
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+            }
+            
+            Spacer()
+            
+            // 播放状态图标
+            HStack(spacing: 20) {
+                Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundColor(.primary)
+            }
+        }
+        .padding(10)
+        .onTapGesture {
+            isExpanded.toggle()
+        }
+    }
+    
+    // 展开视图 - 更详细的信息
+    func expandedView(state: MusicPlaybackAttributes.ContentState) -> some View {
+        VStack(spacing: 12) {
+            // 顶部：歌曲信息
+            HStack {
+                // 专辑封面占位
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(LinearGradient(
+                        gradient: Gradient(colors: [.blue.opacity(0.7), .purple.opacity(0.7)]),
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    ))
+                    .frame(width: 60, height: 60)
+                    .overlay(
+                        Image(systemName: "music.note")
+                            .foregroundColor(.white)
+                            .font(.system(size: 30))
+                    )
+                
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(state.title)
+                        .font(.system(size: 18, weight: .bold))
+                        .lineLimit(1)
+                    
+                    Text(state.artist)
+                        .font(.system(size: 14))
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
+                
+                Spacer()
+            }
+            
+            // 进度条
+            ZStack(alignment: .leading) {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.secondary.opacity(0.3))
+                    .frame(height: 4)
+                
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.blue)
+                    .frame(width: progressWidth(currentTime: state.currentTime, duration: state.duration), height: 4)
+            }
+            
+            // 时间显示与控制按钮
+            HStack {
+                Text(formatTime(state.currentTime))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+                
+                Spacer()
+                
+                // 控制按钮
+                HStack(spacing: 30) {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 20))
+                    
+                    Image(systemName: state.isPlaying ? "pause.circle.fill" : "play.circle.fill")
+                        .font(.system(size: 32))
+                    
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 20))
+                }
+                
+                Spacer()
+                
+                Text(formatTime(state.duration))
+                    .font(.system(size: 12))
+                    .foregroundColor(.secondary)
+            }
+        }
+        .padding(16)
+        .onTapGesture {
+            isExpanded.toggle()
+        }
+    }
+    
+    // 格式化时间为 mm:ss 格式
+    private func formatTime(_ time: TimeInterval) -> String {
+        let minutes = Int(time) / 60
+        let seconds = Int(time) % 60
+        return String(format: "%d:%02d", minutes, seconds)
+    }
+    
+    // 计算进度条宽度
+    private func progressWidth(currentTime: TimeInterval, duration: TimeInterval) -> CGFloat {
+        let progress = currentTime / max(duration, 1)
+        // 假设视图宽度为UIScreen.main.bounds.width - 32 (padding)
+        return (UIScreen.main.bounds.width - 32) * CGFloat(progress)
+    }
+}
+
+extension MusicPlaybackAttributes {
+    fileprivate static var preview: MusicPlaybackAttributes {
+        MusicPlaybackAttributes()
+    }
+}
+
+extension MusicPlaybackAttributes.ContentState {
+    fileprivate static var playing: MusicPlaybackAttributes.ContentState {
+        MusicPlaybackAttributes.ContentState(
+            title: "示例歌曲",
+            artist: "示例艺术家",
+            isPlaying: true,
+            currentTime: 75,
+            duration: 180
+        )
+     }
+     
+     fileprivate static var paused: MusicPlaybackAttributes.ContentState {
+         MusicPlaybackAttributes.ContentState(
+             title: "另一首歌曲",
+             artist: "另一位艺术家",
+             isPlaying: false,
+             currentTime: 45,
+ 

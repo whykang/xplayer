@@ -1,0 +1,232 @@
+//
+//  SceneDelegate.swift
+//  music
+//
+//  Created by Hongyue Wang on 2025/3/31.
+//
+
+import UIKit
+import SwiftUI
+import WidgetKit
+import ActivityKit
+
+class SceneDelegate: UIResponder, UIWindowSceneDelegate {
+
+    var window: UIWindow?
+
+    func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        // 创建主界面
+        let mainView = ContentView()
+        
+        // 使用UIHostingController包装SwiftUI视图
+        if let windowScene = scene as? UIWindowScene {
+            let window = UIWindow(windowScene: windowScene)
+            window.rootViewController = UIHostingController(rootView: mainView)
+            self.window = window
+            window.makeKeyAndVisible()
+        }
+        
+        // 处理在启动时接收到的URL
+        for urlContext in connectionOptions.urlContexts {
+            self.scene(scene, openURLContexts: [urlContext])
+        }
+        
+        // 注册通知，处理来自AppDelegate的文件导入请求
+        NotificationCenter.default.addObserver(
+            forName: Notification.Name("ExternalAudioFileReceived"),
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            if let url = notification.userInfo?["fileURL"] as? URL {
+                self?.handleExternalAudioFile(url)
+            }
+        }
+    }
+
+    func sceneDidDisconnect(_ scene: UIScene) {
+        // Called as the scene is being released by the system.
+        // This occurs shortly after the scene enters the background, or when its session is discarded.
+        // Release any resources associated with this scene that can be re-created the next time the scene connects.
+        // The scene may re-connect later, as its session was not necessarily discarded (see `application:didDiscardSceneSessions` instead).
+    }
+
+    func sceneDidBecomeActive(_ scene: UIScene) {
+        // Called when the scene has moved from an inactive state to an active state.
+        // Use this method to restart any tasks that were paused (or not yet started) when the scene was inactive.
+        
+        // 应用从非活跃状态变为活跃状态，可以在此处创建灵动岛
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            if MusicPlayer.shared.isPlaying && MusicPlayer.shared.currentSong != nil {
+                print("应用变为活跃，尝试创建灵动岛")
+                MusicPlayer.shared.forceUpdateLiveActivity()
+            }
+        }
+    }
+
+    func sceneWillResignActive(_ scene: UIScene) {
+        // Called when the scene will move from an active state to an inactive state.
+        // This may occur due to temporary interruptions (ex. an incoming phone call).
+        
+        // 应用即将从活跃变为非活跃，更新灵动岛
+        if MusicPlayer.shared.isPlaying && MusicPlayer.shared.currentSong != nil {
+            print("应用即将进入非活跃状态，确保灵动岛已更新")
+            MusicPlayer.shared.forceUpdateLiveActivity()
+        }
+    }
+
+    func sceneWillEnterForeground(_ scene: UIScene) {
+        // Called as the scene transitions from the background to the foreground.
+        // Use this method to undo the changes made on entering the background.
+    }
+
+    func sceneDidEnterBackground(_ scene: UIScene) {
+        // Called as the scene transitions from the foreground to the background.
+        // Use this method to save data, release shared resources, and store enough scene-specific state information
+        // to restore the scene back to its current state.
+        
+        // 应用进入后台
+        if MusicPlayer.shared.isPlaying && MusicPlayer.shared.currentSong != nil {
+            // 如果正在播放，更新灵动岛
+            if MusicPlayer.shared.hasActiveLiveActivity {
+                print("应用进入后台，更新已有灵动岛")
+                MusicPlayer.shared.forceUpdateLiveActivity()
+            }
+        } else {
+            // 不在播放音乐时结束灵动岛
+            if MusicPlayer.shared.hasActiveLiveActivity {
+                print("应用进入后台且未播放音乐，结束灵动岛")
+                MusicPlayer.shared.endAllLiveActivities()
+            }
+        }
+    }
+
+    // 处理来自灵动岛的URL操作
+    func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
+        guard let url = URLContexts.first?.url else {
+            return
+        }
+        
+        print("收到URL: \(url)")
+        
+        if url.scheme == "musicapp" {
+            let path = url.path
+            
+            if path.contains("/control/") {
+                let controlAction = path.replacingOccurrences(of: "/control/", with: "")
+                
+                switch controlAction {
+                case "playPause":
+                    print("执行播放/暂停操作")
+                    MusicPlayer.shared.playPause()
+                    
+                case "next":
+                    print("执行下一首操作")
+                    MusicPlayer.shared.playNext()
+                    
+                case "previous":
+                    print("执行上一首操作")
+                    MusicPlayer.shared.playPrevious()
+                    
+                default:
+                    print("未知操作: \(controlAction)")
+                }
+                
+                // 更新灵动岛状态
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+                    MusicPlayer.shared.forceUpdateLiveActivity()
+                }
+            } else if path.contains("/open") {
+                // 打开主应用时的操作
+                print("打开主应用")
+            }
+        } else if url.isFileURL {
+            // 处理文件URL的情况（外部应用打开音频文件）
+            handleExternalAudioFile(url)
+        }
+    }
+
+    // 添加新方法处理外部音频文件
+    private func handleExternalAudioFile(_ url: URL) {
+        // 检查是否是支持的音频文件
+        if MusicFileManager.shared.isSupportedAudioFile(url: url) {
+            print("接收到外部音频文件: \(url.lastPathComponent)")
+            
+            // 展示导入确认对话框
+            if let rootViewController = self.window?.rootViewController {
+                let alert = UIAlertController(
+                    title: "导入音乐",
+                    message: "是否导入音乐文件 \"\(url.lastPathComponent)\" 到音乐库？",
+                    preferredStyle: .alert
+                )
+                
+                alert.addAction(UIAlertAction(title: "取消", style: .cancel))
+                
+                alert.addAction(UIAlertAction(title: "导入", style: .default) { _ in
+                    // 显示加载指示器
+                    let loadingAlert = UIAlertController(
+                        title: "正在导入",
+                        message: "请稍候...",
+                        preferredStyle: .alert
+                    )
+                    
+                    rootViewController.present(loadingAlert, animated: true)
+                    
+                    // 导入音乐文件
+                    MusicFileManager.shared.importMusicFile(from: url) { result in
+                        DispatchQueue.main.async {
+                            // 关闭加载指示器
+                            loadingAlert.dismiss(animated: true)
+                            
+                            switch result {
+                            case .success(let song):
+                                // 显示成功消息
+                                let successAlert = UIAlertController(
+                                    title: "导入成功",
+                                    message: "已成功导入 \"\(song.title)\"",
+                                    preferredStyle: .alert
+                                )
+                                
+                                successAlert.addAction(UIAlertAction(title: "确定", style: .default))
+                                
+                                rootViewController.present(successAlert, animated: true)
+                                
+                                // 可选：立即播放导入的歌曲
+                                MusicPlayer.shared.play(song)
+                                
+                            case .failure(let error):
+                                // 显示错误消息
+                                let errorAlert = UIAlertController(
+                                    title: "导入失败",
+                                    message: "\(error.localizedDescription)",
+                                    preferredStyle: .alert
+                                )
+                                
+                                errorAlert.addAction(UIAlertAction(title: "确定", style: .default))
+                                
+                                rootViewController.present(errorAlert, animated: true)
+                            }
+                        }
+                    }
+                }))
+                
+                rootViewController.present(alert, animated: true)
+            }
+        } else {
+            print("不支持的文件类型: \(url.lastPathComponent)")
+            
+            // 显示不支持的文件类型提示
+            if let rootViewController = self.window?.rootViewController {
+                let alert = UIAlertController(
+                    title: "不支持的文件类型",
+                    message: "无法导入 \"\(url.lastPathComponent)\"，不支持此文件类型。",
+                    preferredStyle: .alert
+                )
+                
+                alert.addAction(UIAlertAction(title: "确定", style: .default))
+                
+                rootViewController.present(alert, animated: true)
+            }
+        }
+    }
+}
+
