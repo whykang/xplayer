@@ -27,7 +27,7 @@
 
 **扫码下载**
 
-<img src="https://s21.ax1x.com/2025/06/07/pVi2WWV.png" width="150" alt="App Store下载二维码"/>
+<img src="https://whykangkang.com/xplayer/down.png" width="150" alt="App Store下载二维码"/>
 
 *支持iOS 16.0及以上版本*
 
